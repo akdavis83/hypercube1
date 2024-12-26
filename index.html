@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>4D and 5D Hypercube Visualization</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            background-color: black;
+        }
+    </style>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/2.8.1/gl-matrix-min.js"></script>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script type="module">
+        // Vertex Shader
+        const vertexShaderSource = `
+            attribute vec4 position;
+            uniform mat4 modelViewMatrix;
+            uniform mat4 projectionMatrix;
+            void main() {
+                gl_Position = projectionMatrix * modelViewMatrix * position;
+            }
+        `;
+
+        // Fragment Shader
+        const fragmentShaderSource = `
+            precision mediump float;
+            uniform vec4 color;
+            void main() {
+                gl_FragColor = color;
+            }
+        `;
+
+        class Hypercube {
+            constructor(dimensions) {
+                this.dimensions = dimensions;
+                this.vertices = this.generateVertices();
+                this.edges = this.generateEdges();
+                this.rotationAngles = Array(dimensions * (dimensions - 1) / 2).fill(0);
+            }
+
+            generateVertices() {
+                const vertices = [];
+                const generate = (current, dim) => {
+                    if (dim === 0) {
+                        vertices.push([...current]);
+                        return;
+                    }
+                     generate([...current, -1], dim - 1);
+                     generate([...current, 1], dim - 1);
+                };
+                generate([], this.dimensions);
+                 return vertices;
+            }
+
+             generateEdges() {
+                 const edges = [];
+                 for (let i = 0; i < this.vertices.length; i++) {
+                      for (let j = i + 1; j < this.vertices.length; j++) {
+                        let diffCount = 0;
+                        for(let k = 0; k < this.dimensions; k++){
+                           if(this.vertices[i][k] != this.vertices[j][k])
+                               diffCount++;
+                        }
+                          if(diffCount == 1) edges.push([i, j]);
+                     }
+                  }
+                  return edges;
+               }
+
+
+            getRotationMatrix(axis1, axis2, angle) {
+              const dim = this.dimensions;
+                const mat = Array(dim).fill(null).map(() => Array(dim).fill(0));
+                 for (let i = 0; i < dim; i++) mat[i][i] = 1;
+                const c = Math.cos(angle);
+                const s = Math.sin(angle);
+
+                mat[axis1][axis1] = c;
+                mat[axis1][axis2] = -s;
+                mat[axis2][axis1] = s;
+                mat[axis2][axis2] = c;
+
+                return mat;
+            }
+
+            rotateVertices(deltaTime, rotationSpeeds) {
+                  let rotatedVertices = this.vertices.map(v => [...v]);
+
+                let k = 0;
+                for (let i = 0; i < this.dimensions; i++) {
+                   for (let j = i + 1; j < this.dimensions; j++) {
+                        this.rotationAngles[k] += rotationSpeeds[k] * deltaTime;
+                        const rotMat = this.getRotationMatrix(i, j, this.rotationAngles[k]);
+                        rotatedVertices = rotatedVertices.map(v => {
+                            const vec = [...v];
+                            const newVec = Array(this.dimensions).fill(0);
+                            for (let a = 0; a < this.dimensions; a++) {
+                                for (let b = 0; b < this.dimensions; b++) {
+                                    newVec[a] += rotMat[a][b] * vec[b];
+                                }
+                            }
+                            return newVec;
+                        });
+                         k++;
+                     }
+                 }
+                return rotatedVertices;
+            }
+
+            projectVertices(vertices) {
+                return vertices.map(v => {
+                  const projected = v.slice(0,3);
+                  return [projected[0], projected[1], projected[2], 1.0]
+                }
+                );
+            }
+        }
+
+       function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Error compiling shader:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        function createProgram(gl, vertexShader, fragmentShader) {
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                console.error('Error linking program:', gl.getProgramInfoLog(program));
+                gl.deleteProgram(program);
+                return null;
+            }
+            return program;
+        }
+
+        function main() {
+            const canvas = document.getElementById('canvas');
+            const gl = canvas.getContext('webgl');
+
+            if (!gl) {
+                console.error('WebGL not supported!');
+                return;
+            }
+
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+
+           gl.enable(gl.DEPTH_TEST);
+
+
+            const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+            const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+            const program = createProgram(gl, vertexShader, fragmentShader);
+
+            const positionAttributeLocation = gl.getAttribLocation(program, 'position');
+            const modelViewMatrixLocation = gl.getUniformLocation(program, 'modelViewMatrix');
+            const projectionMatrixLocation = gl.getUniformLocation(program, 'projectionMatrix');
+           const colorLocation = gl.getUniformLocation(program, 'color');
+
+
+
+           const projectionMatrix = mat4.create();
+           mat4.perspective(projectionMatrix, Math.PI / 4, canvas.width / canvas.height, 0.1, 100);
+
+
+            const hypercube4D = new Hypercube(4);
+            const hypercube5D = new Hypercube(5);
+
+            const rotationSpeeds4D = [0.5, 0.4, 0.3, 0.2, 0.4, 0.2];
+            const rotationSpeeds5D = [0.5, 0.4, 0.3, 0.2, 0.1, 0.4, 0.3, 0.2, 0.1, 0.3];
+
+             const positionBuffer = gl.createBuffer();
+
+            let prevTime = performance.now();
+
+           function drawLines(vertices, edges, color){
+                const flattenedVertices = vertices.flat();
+                gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(flattenedVertices), gl.STATIC_DRAW);
+                gl.enableVertexAttribArray(positionAttributeLocation);
+                gl.vertexAttribPointer(positionAttributeLocation, 4, gl.FLOAT, false, 0, 0);
+               gl.uniform4fv(colorLocation, color);
+                 for (const [i, j] of edges) {
+                    gl.drawArrays(gl.LINES, i * 2, 2);
+                  }
+           }
+
+
+            function render() {
+                const currentTime = performance.now();
+                const deltaTime = (currentTime - prevTime) / 1000;
+                prevTime = currentTime;
+
+                gl.clearColor(0, 0, 0, 1);
+                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+                gl.useProgram(program);
+
+                 gl.uniformMatrix4fv(projectionMatrixLocation, false, projectionMatrix);
+                 const modelViewMatrix = mat4.create();
+                 mat4.translate(modelViewMatrix, modelViewMatrix, [0,0,-10]);
+                  gl.uniformMatrix4fv(modelViewMatrixLocation, false, modelViewMatrix);
+
+               const rotatedVertices4D = hypercube4D.rotateVertices(deltaTime, rotationSpeeds4D);
+               const projectedVertices4D = hypercube4D.projectVertices(rotatedVertices4D);
+
+
+               const rotatedVertices5D = hypercube5D.rotateVertices(deltaTime, rotationSpeeds5D);
+               const projectedVertices5D = hypercube5D.projectVertices(rotatedVertices5D);
+
+
+                drawLines(projectedVertices4D, hypercube4D.edges, [1.0, 1.0, 1.0, 1.0]);
+                 drawLines(projectedVertices5D, hypercube5D.edges, [1.0, 1.0, 0.0, 1.0]);
+
+                requestAnimationFrame(render);
+            }
+
+            render();
+        }
+
+        main();
+    </script>
+</body>
+</html>
